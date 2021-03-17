@@ -47,7 +47,10 @@ object AggregateService extends IOApp {
       )
       server <-
         BlazeServerBuilder[IO](implicitly[ExecutionContext](nonBlockingContext))
-          .bindHttp(8081)
+          .bindHttp(
+            loadedServiceConfig.host.port,
+            host = loadedServiceConfig.host.address
+          )
           .withHttpApp(routeHandler.orNotFound)
           .serve
     } yield server).compile.lastOrError
