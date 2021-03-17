@@ -1,4 +1,4 @@
-package com.aggregate.model.generic
+package com.aggregate.model.domain.generic
 
 final case class Track(
     orderId: String,
@@ -6,6 +6,9 @@ final case class Track(
 )
 
 object Track {
+
+  def empty: Track =
+    Track("", Status.fromString(Status.Statuses.New.toString.toLowerCase()).get)
 
   sealed abstract case class Status private (
       value: Status.Statuses.Status
@@ -20,7 +23,8 @@ object Track {
       type Status = Value
       val New, Collecting = Value
 
-      def find(v: String): Option[Status] = values.find(_.toString == v)
+      def find(v: String): Option[Status] =
+        values.find(_.toString.toLowerCase() == v)
     }
 
   }

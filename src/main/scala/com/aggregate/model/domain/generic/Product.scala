@@ -1,4 +1,4 @@
-package com.aggregate.model.generic
+package com.aggregate.model.domain.generic
 
 sealed abstract case class Product private (value: Product.Products.Product)
 
