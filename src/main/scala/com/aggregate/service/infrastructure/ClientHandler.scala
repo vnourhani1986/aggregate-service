@@ -1,6 +1,6 @@
 package com.aggregate.service.infrastructure
 
-import cats.effect.ConcurrentEffect
+import cats.effect.{ConcurrentEffect, Sync}
 import fs2.{Chunk, Pipe, Stream}
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s._
@@ -16,7 +16,7 @@ import com.aggregate.model.domain.generic.{
 }
 import com.aggregate.model.generic.Convert
 import com.aggregate.model.generic.Convert.Convert
-import com.aggregate.service.ServiceConfig.Client.Api.Urls
+import org.http4s.dsl.io.{Ok, ServiceUnavailable}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.FiniteDuration
@@ -48,18 +48,22 @@ class ClientHandlerImpl[F[_]: ConcurrentEffect](
         responses <- Stream.eval(
           client.get[Chunk[Shipment]](
             s"$shipmentUrl?q=${queries.toList.mkString(",")}"
-          )(response =>
-            response
-              .as[Map[String, Seq[String]]]
-              .map(m =>
-                Chunk.array(m.map {
-                  case (orderId, products) =>
-                    Convert[ShipmentView, Shipment](
-                      ShipmentView(orderId, products)
-                    )
-                }.toArray)
-              )
-          )
+          ) { response =>
+            val body = response.status match {
+              case Status(code) if code == Ok.code =>
+                response.as[Map[String, Seq[String]]]
+              case Status(code) if code == ServiceUnavailable.code =>
+                Sync[F].delay(Map.empty[String, Seq[String]])
+            }
+            body.map(m =>
+              Chunk.array(m.map {
+                case (orderId, products) =>
+                  Convert[ShipmentView, Shipment](
+                    ShipmentView(orderId, products)
+                  )
+              }.toArray)
+            )
+          }
         )
       } yield responses
     }
@@ -74,18 +78,22 @@ class ClientHandlerImpl[F[_]: ConcurrentEffect](
         responses <- Stream.eval(
           client.get[Chunk[Track]](
             s"$trackUrl?q=${queries.toList.mkString(",")}"
-          )(response =>
-            response
-              .as[Map[String, String]]
-              .map(m =>
-                Chunk.array(m.map {
-                  case (orderId, status) =>
-                    Convert[TrackView, Track](
-                      TrackView(orderId, status)
-                    )
-                }.toArray)
-              )
-          )
+          ) { response =>
+            val body = response.status match {
+              case Status(code) if code == Ok.code =>
+                response.as[Map[String, String]]
+              case Status(code) if code == ServiceUnavailable.code =>
+                Sync[F].delay(Map.empty[String, String])
+            }
+            body.map(m =>
+              Chunk.array(m.map {
+                case (orderId, status) =>
+                  Convert[TrackView, Track](
+                    TrackView(orderId, status)
+                  )
+              }.toArray)
+            )
+          }
         )
       } yield responses
     }
@@ -100,18 +108,22 @@ class ClientHandlerImpl[F[_]: ConcurrentEffect](
         responses <- Stream.eval(
           client.get[Chunk[Pricing]](
             s"$pricingUrl?q=${queries.toList.map(_.value.value).mkString(",")}"
-          )(response =>
-            response
-              .as[Map[String, Float]]
-              .map(m =>
-                Chunk.array(m.map {
-                  case (orderId, price) =>
-                    Convert[PricingView, Pricing](
-                      PricingView(orderId, price)
-                    )
-                }.toArray)
-              )
-          )
+          ) { response =>
+            val body = response.status match {
+              case Status(code) if code == Ok.code =>
+                response.as[Map[String, Float]]
+              case Status(code) if code == ServiceUnavailable.code =>
+                Sync[F].delay(Map.empty[String, Float])
+            }
+            body.map(m =>
+              Chunk.array(m.map {
+                case (orderId, price) =>
+                  Convert[PricingView, Pricing](
+                    PricingView(orderId, price)
+                  )
+              }.toArray)
+            )
+          }
         )
       } yield responses
     }
