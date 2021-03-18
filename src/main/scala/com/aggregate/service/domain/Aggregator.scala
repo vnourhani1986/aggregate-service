@@ -40,7 +40,18 @@ class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
   override def collect(query: Query): F[Aggregate] =
     Collector[F](shipmentTopic, trackTopic, pricingTopic)(query)(collectTimeout)
 
-  def shipmentProcess: Stream[F, Unit] =
+  def run: Stream[F, Aggregator[F]] =
+    Stream
+      .eval(Sync[F].delay(this))
+      .concurrently(
+        Stream(
+          this.shipmentProcess,
+          this.trackProcess,
+          this.pricingProcess
+        ).parJoin(3)
+      )
+
+  private def shipmentProcess: Stream[F, Unit] =
     queryTopic
       .subscribe(100)
       .map(_.shipments)
@@ -50,7 +61,7 @@ class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
       .flatMap(chunk => Stream.emits(chunk.toList))
       .through(shipmentTopic.publish)
 
-  def trackProcess: Stream[F, Unit] =
+  private def trackProcess: Stream[F, Unit] =
     queryTopic
       .subscribe(100)
       .map(_.track)
@@ -60,7 +71,7 @@ class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
       .flatMap(chunk => Stream.emits(chunk.toList))
       .through(trackTopic.publish)
 
-  def pricingProcess: Stream[F, Unit] =
+  private def pricingProcess: Stream[F, Unit] =
     queryTopic
       .subscribe(100)
       .map(_.pricing)
@@ -81,7 +92,7 @@ object Aggregator {
       maxTimePeriod: Int
   )(
       collectTimeout: FiniteDuration
-  ): Stream[F, Aggregator[F]] =
+  ): Stream[F, Aggregator[F]] = {
     for {
       queryTopic <- Stream.eval(Topic[F, Query](Query.empty))
       shipmentTopic <- Stream.eval(Topic[F, Shipment](Shipment.empty))
@@ -96,11 +107,9 @@ object Aggregator {
           )(clientHandler)(maxBufferSize, maxTimePeriod)(collectTimeout)
         )
       )
-      _ <- Stream(
-        aggregator.shipmentProcess,
-        aggregator.trackProcess,
-        aggregator.pricingProcess
-      ).parJoin(3)
-    } yield aggregator
+      run <- aggregator.run
+    } yield run
+
+  }
 
 }

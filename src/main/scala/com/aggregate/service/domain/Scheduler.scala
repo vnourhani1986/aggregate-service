@@ -51,7 +51,6 @@ object Scheduler {
         }
         .split(_.isEmpty)
         .map(_.map(_.get))
-        .map { x => println(x, "end"); x }
         .filter(_.nonEmpty)
     }
 

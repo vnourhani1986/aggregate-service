@@ -90,6 +90,7 @@ object RouteHandler {
         .cond(
           shipmentQuery
             .split(",")
+            //            .toSet
             .map(x => Try(x.toInt).toOption)
             .exists(_.isEmpty),
           shipmentQuery
@@ -103,6 +104,7 @@ object RouteHandler {
         .cond(
           trackQuery
             .split(",")
+            //            .toSet
             .map(x => Try(x.toInt).toOption)
             .exists(_.isEmpty),
           shipmentQuery
@@ -116,6 +118,7 @@ object RouteHandler {
         .cond(
           pricingQuery
             .split(",")
+            .toSet
             .map(ISO2CountryCode.fromString)
             .exists(_.isEmpty),
           pricingQuery.split(",").map(ISO2CountryCode.fromString).map(_.get),

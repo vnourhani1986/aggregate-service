@@ -10,32 +10,31 @@ import scala.concurrent.duration.DurationInt
 
 class SchedulerSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
 
-  "scheduler" - {
-    "return" in {
-      val source =
-        Stream.repeatEval(IO(1)).metered(1.seconds).interruptAfter(8.seconds) ++
-          Stream
-            .repeatEval(IO(1))
-            .delayBy(5.seconds)
-            .metered(1.seconds)
-            .interruptAfter(8.seconds)
+  "scheduler with inputs by distances lower than max period(5)" - {
+    "should return chunk of max size(5)" in {
+      val source = Stream.repeatEval(IO(1)).metered(4.seconds)
       val scheduler = Scheduler[IO, Int](5, 5)
       source
         .through(scheduler)
-        .take(3)
+        .take(1)
         .compile
         .toList
-        .asserting(_ shouldBe List())
+        .asserting(_ shouldBe List(Chunk.array(Array(1, 1, 1, 1, 1))))
     }
   }
 
-  "My Code " - {
-    "works" in {
-      Stream[IO, Int](1, 2)
-        .take(2)
+  "scheduler with 2 inputs by distances lower than max period(5) at first and no more input" - {
+    "should return chunk of max size(2)" in {
+      val source =
+        Stream.repeatEval(IO(1)).metered(2.seconds).interruptAfter(5.seconds)
+      val scheduler = Scheduler[IO, Int](5, 5)
+      source
+        .through(scheduler)
+        .take(1)
         .compile
         .toList
-        .asserting(_ shouldBe List(1))
+        .asserting(_ shouldBe List(Chunk.array(Array(1, 1))))
     }
   }
+
 }

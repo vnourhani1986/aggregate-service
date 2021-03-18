@@ -28,13 +28,15 @@ object Collector {
     Applicative[F].map3(
       collector[F, Shipment, String](shipmentTopic)(
         query.shipments
-      )((value, list) => list.contains(value.orderId))(timeout),
+      )((value, list) => list.contains(value.orderId))(timeout).compile.toList,
       collector[F, Track, String](trackTopic)(query.track)((value, list) =>
         list.contains(value.orderId)
-      )(timeout),
+      )(timeout).compile.toList,
       collector[F, Pricing, ISO2CountryCode](pricingTopic)(
         query.pricing
-      )((value, list) => list.contains(value.iso2CountryCode))(timeout)
+      )((value, list) => list.contains(value.iso2CountryCode))(
+        timeout
+      ).compile.toList
     ) {
       case (shipments, tracks, pricing) =>
         Aggregate(
@@ -50,7 +52,7 @@ object Collector {
       topic: Topic[F, A]
   )(
       queries: Seq[B]
-  )(f: (A, Seq[B]) => Boolean)(timeout: FiniteDuration): F[List[A]] =
+  )(f: (A, Seq[B]) => Boolean)(timeout: FiniteDuration): Stream[F, A] =
     topic
       .subscribe(100)
       .interruptAfter(timeout)
@@ -59,15 +61,14 @@ object Collector {
           if (list.length == queries.length) None
           else
             Some { chunk: Chunk[A] =>
-              chunk match {
-                case chunk
-                    if !list.contains(chunk(0)) && f(chunk(0), queries) =>
-                  (chunk(0) :: list, chunk)
+              chunk.foldLeft((list, Chunk.empty[A])) {
+                case ((l, c), value)
+                    if !list.contains(value) && f(value, queries) =>
+                  (l ++ List(value), Chunk.seq(c.toList ++ List(value)))
+                case ((l, c), _) => (l, c)
+
               }
             }
         }
       }
-      .compile
-      .toList
-
 }
