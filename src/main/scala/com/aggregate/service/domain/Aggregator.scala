@@ -1,7 +1,7 @@
 package com.aggregate.service.domain
 
-import cats.effect.{ConcurrentEffect, Timer}
-import com.aggregate.model.domain.core.Query
+import cats.effect.{ConcurrentEffect, IO, Sync, Timer}
+import com.aggregate.model.domain.core.{Aggregate, Query}
 import com.aggregate.model.domain.generic.{
   ISO2CountryCode,
   Pricing,
@@ -12,52 +12,95 @@ import com.aggregate.service.infrastructure.ClientHandler
 import fs2.concurrent.Topic
 import fs2.{Chunk, Pipe, Stream}
 
+import scala.concurrent.duration.FiniteDuration
+
+trait Aggregator[F[_]] {
+  def publish(query: Query): F[Unit]
+  def collect(query: Query): F[Aggregate]
+}
+
+class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
+    queryTopic: Topic[F, Query]
+)(
+    shipmentTopic: Topic[F, Shipment],
+    trackTopic: Topic[F, Track],
+    pricingTopic: Topic[F, Pricing]
+)(
+    clientHandler: ClientHandler[F]
+)(
+    maxBufferSize: Int,
+    maxTimePeriod: Int
+)(
+    collectTimeout: FiniteDuration
+) extends Aggregator[F] {
+
+  override def publish(query: Query): F[Unit] =
+    queryTopic.publish1(query)
+
+  override def collect(query: Query): F[Aggregate] =
+    Collector[F](shipmentTopic, trackTopic, pricingTopic)(query)(collectTimeout)
+
+  def shipmentProcess: Stream[F, Unit] =
+    queryTopic
+      .subscribe(100)
+      .map(_.shipments)
+      .flatMap(Stream.emits)
+      .through(Scheduler[F, String](maxBufferSize, maxTimePeriod))
+      .through(clientHandler.getShipments)
+      .flatMap(chunk => Stream.emits(chunk.toList))
+      .through(shipmentTopic.publish)
+
+  def trackProcess: Stream[F, Unit] =
+    queryTopic
+      .subscribe(100)
+      .map(_.track)
+      .flatMap(Stream.emits)
+      .through(Scheduler[F, String](maxBufferSize, maxTimePeriod))
+      .through(clientHandler.getTracks)
+      .flatMap(chunk => Stream.emits(chunk.toList))
+      .through(trackTopic.publish)
+
+  def pricingProcess: Stream[F, Unit] =
+    queryTopic
+      .subscribe(100)
+      .map(_.pricing)
+      .flatMap(Stream.emits)
+      .through(Scheduler[F, ISO2CountryCode](maxBufferSize, maxTimePeriod))
+      .through(clientHandler.getPricing)
+      .flatMap(chunk => Stream.emits(chunk.toList))
+      .through(pricingTopic.publish)
+
+}
+
 object Aggregator {
 
   def apply[F[_]: ConcurrentEffect: Timer](
-      topic: Topic[F, Query]
-  )(
-      shipmentTopic: Topic[F, Shipment],
-      trackTopic: Topic[F, Track],
-      pricingTopic: Topic[F, Pricing]
-  )(
       clientHandler: ClientHandler[F]
   )(
       maxBufferSize: Int,
       maxTimePeriod: Int
-  ): Stream[F, Unit] = {
-
-    def shipmentProcess: Stream[F, Unit] =
-      topic
-        .subscribe(100)
-        .map(_.shipments)
-        .flatMap(Stream.emits)
-        .through(Scheduler[F, String](maxBufferSize, maxTimePeriod))
-        .through(clientHandler.getShipments)
-        .flatMap(chunk => Stream.emits(chunk.toList))
-        .through(shipmentTopic.publish)
-
-    def trackProcess: Stream[F, Unit] =
-      topic
-        .subscribe(100)
-        .map(_.track)
-        .flatMap(Stream.emits)
-        .through(Scheduler[F, String](maxBufferSize, maxTimePeriod))
-        .through(clientHandler.getTracks)
-        .flatMap(chunk => Stream.emits(chunk.toList))
-        .through(trackTopic.publish)
-
-    def pricingProcess: Stream[F, Unit] =
-      topic
-        .subscribe(100)
-        .map(_.pricing)
-        .flatMap(Stream.emits)
-        .through(Scheduler[F, ISO2CountryCode](maxBufferSize, maxTimePeriod))
-        .through(clientHandler.getPricing)
-        .flatMap(chunk => Stream.emits(chunk.toList))
-        .through(pricingTopic.publish)
-
-    Stream(shipmentProcess, trackProcess, pricingProcess).parJoin(3)
-  }
+  )(
+      collectTimeout: FiniteDuration
+  ): Stream[F, Aggregator[F]] =
+    for {
+      queryTopic <- Stream.eval(Topic[F, Query](Query.empty))
+      shipmentTopic <- Stream.eval(Topic[F, Shipment](Shipment.empty))
+      trackTopic <- Stream.eval(Topic[F, Track](Track.empty))
+      pricingTopic <- Stream.eval(Topic[F, Pricing](Pricing.empty))
+      aggregator <- Stream.eval(
+        Sync[F].delay(
+          new AggregatorImpl[F](queryTopic)(
+            shipmentTopic,
+            trackTopic,
+            pricingTopic
+          )(clientHandler)(maxBufferSize, maxTimePeriod)(collectTimeout)
+        )
+      )
+      _ <- Stream(
+        aggregator.shipmentProcess,
+        aggregator.trackProcess,
+        aggregator.pricingProcess
+      ).parJoin(3)
+    } yield aggregator
 
 }

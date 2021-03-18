@@ -22,6 +22,7 @@ import com.aggregate.model.domain.generic.{
 }
 import com.aggregate.model.generic.Convert
 import com.aggregate.model.generic.Convert.Convert
+import com.aggregate.service.domain.Aggregator
 import io.circe._
 import io.circe.generic.auto._
 import io.circe.syntax._
@@ -32,14 +33,8 @@ import org.http4s.circe._
 
 object RouteHandler {
 
-  import RouteHandler._
-
   def apply[F[_]: Sync](
-      queryTopic: Topic[F, core.Query]
-  )(
-      shipmentTopic: Topic[F, Shipment],
-      trackTopic: Topic[F, Track],
-      pricingTopic: Topic[F, Pricing]
+      aggregator: Aggregator[F]
   ): HttpRoutes[F] = {
 
     implicit val aggregateViewEncoder: Encoder[AggregateView] =
@@ -69,33 +64,13 @@ object RouteHandler {
             Sync[F].delay(Response(status = BadRequest).withEntity(error))
           case Right(query) =>
             for {
-              _ <- queryTopic.publish1(query)
-              response <- Applicative[F].map3(
-                collector[F, Shipment, String](shipmentTopic)(
-                  shipmentQuery.split(",")
-                )((value, list) => list.contains(value.orderId)),
-                collector[F, Track, String](trackTopic)(trackQuery.split(","))(
-                  (value, list) => list.contains(value.orderId)
-                ),
-                collector[F, Pricing, ISO2CountryCode](pricingTopic)(
-                  pricingQuery
-                    .split(",")
-                    .map(ISO2CountryCode.fromString)
-                    .filter(_.isDefined)
-                    .map(_.get)
-                )((value, list) => list.contains(value.iso2CountryCode))
-              ) {
-                case (shipments, tracks, pricing) =>
-                  val aggregate = Aggregate(
-                    shipments = shipments,
-                    track = tracks,
-                    pricing = pricing
-                  )
-                  Response[F](status = Ok).withEntity(
-                    Convert[Aggregate, AggregateView](aggregate).asJson
-                  )
-              }
-            } yield response
+              _ <- aggregator.publish(query)
+              aggregate <- aggregator.collect(query)
+            } yield Response[F](status = Ok).withEntity(
+              Convert[(Query, Aggregate), AggregateView](
+                (query, aggregate)
+              ).asJson
+            )
         }
     }
   }
@@ -154,27 +129,6 @@ object RouteHandler {
 
   }
 
-  def collector[F[_]: Sync, A, B](
-      topic: Topic[F, A]
-  )(queries: Seq[B])(f: (A, Seq[B]) => Boolean): F[List[A]] =
-    topic
-      .subscribe(100)
-      .through { in: Stream[F, A] =>
-        in.scanChunksOpt(List.empty[A]) { list =>
-          if (list.length == queries.length) None
-          else
-            Some { chunk: Chunk[A] =>
-              chunk match {
-                case chunk
-                    if !list.contains(chunk(0)) && f(chunk(0), queries) =>
-                  (chunk(0) :: list, chunk)
-              }
-            }
-        }
-      }
-      .compile
-      .toList
-
   object ShipmentQueryParamMatcher
       extends QueryParamDecoderMatcher[String]("shipments")
   object TrackQueryParamMatcher
@@ -183,29 +137,65 @@ object RouteHandler {
       extends QueryParamDecoderMatcher[String]("pricing")
 
   final case class AggregateView(
-      shipments: Map[String, Seq[String]],
-      track: Map[String, String],
-      pricing: Map[String, Float]
+      shipments: Map[String, Option[Seq[String]]],
+      track: Map[String, Option[String]],
+      pricing: Map[String, Option[Float]]
   )
 
-  implicit val aggregateToAggregateView: Convert[Aggregate, AggregateView] =
-    aggregate =>
-      AggregateView(
-        shipments = aggregate.shipments
-          .foldLeft(Map.empty[String, Seq[String]]) {
+  implicit
+  val aggregateToAggregateView: Convert[(Query, Aggregate), AggregateView] = {
+    case (query, aggregate) =>
+      val collectedShipments: Map[String, Option[Seq[String]]] =
+        aggregate.shipments
+          .foldLeft(Map.empty[String, Option[Seq[String]]]) {
             case (m, shipment) =>
-              m.+((shipment.orderId, shipment.products.map(_.value.toString)))
-          },
-        track = aggregate.track
-          .foldLeft(Map.empty[String, String]) {
-            case (m, track) =>
-              m.+((track.orderId, track.status.value.toString))
-          },
-        pricing = aggregate.pricing
-          .foldLeft(Map.empty[String, Float]) {
-            case (m, pricing) =>
-              m.+((pricing.iso2CountryCode.value.value, pricing.price))
+              m.+(
+                (
+                  shipment.orderId,
+                  Some(shipment.products.map(_.value.toString))
+                )
+              )
           }
+      val nonCollectedShipments: Map[String, Option[Seq[String]]] =
+        query.shipments
+          .flatMap(shipment =>
+            aggregate.shipments.filter(_.orderId != shipment)
+          )
+          .map(shipment => (shipment.orderId, None))
+          .toMap
+
+      val collectedTracks = aggregate.track
+        .foldLeft(Map.empty[String, Option[String]]) {
+          case (m, track) =>
+            m.+((track.orderId, Some(track.status.value.toString)))
+        }
+
+      val nonCollectedTracks: Map[String, Option[String]] =
+        query.track
+          .flatMap(track => aggregate.track.filter(_.orderId != track))
+          .map(track => (track.orderId, None))
+          .toMap
+
+      val collectedPricing = aggregate.pricing
+        .foldLeft(Map.empty[String, Option[Float]]) {
+          case (m, pricing) =>
+            m.+((pricing.iso2CountryCode.value.value, Some(pricing.price)))
+        }
+
+      val nonCollectedPricing: Map[String, Option[Float]] =
+        query.pricing
+          .flatMap(pricing =>
+            aggregate.pricing
+              .filter(_.iso2CountryCode.value.value != pricing.value.value)
+          )
+          .map(pricing => (pricing.iso2CountryCode.value.value, None))
+          .toMap
+
+      AggregateView(
+        shipments = collectedShipments ++ nonCollectedShipments,
+        track = collectedTracks ++ nonCollectedTracks,
+        pricing = collectedPricing ++ nonCollectedPricing
       )
+  }
 
 }

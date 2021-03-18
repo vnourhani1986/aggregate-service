@@ -3,16 +3,14 @@ package com.aggregate.service
 import java.util.concurrent.Executors
 
 import cats.effect.{Blocker, ExitCode, IO, IOApp}
-import com.aggregate.model.domain.core.Query
-import com.aggregate.model.domain.generic.{Pricing, Shipment, Track}
 import com.aggregate.service.domain.Aggregator
 import com.aggregate.service.infrastructure.{ClientHandler, RouteHandler}
 import fs2.Stream
-import fs2.concurrent.Topic
 import org.http4s.implicits.http4sKleisliResponseSyntax
 import org.http4s.server.blaze.BlazeServerBuilder
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.DurationInt
 
 object AggregateService extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
@@ -28,23 +26,20 @@ object AggregateService extends IOApp {
         Stream.eval(ServiceConfig.load[IO](blockingContext))
       urlsConfig <- Stream(loadedServiceConfig.client.api.urls)
       schedulerConfig <- Stream(loadedServiceConfig.scheduler)
-      queryTopic <- Stream.eval(Topic[IO, Query](Query.empty))
-      shipmentTopic <- Stream.eval(Topic[IO, Shipment](Shipment.empty))
-      trackTopic <- Stream.eval(Topic[IO, Track](Track.empty))
-      pricingTopic <- Stream.eval(Topic[IO, Pricing](Pricing.empty))
       clientHandler <- ClientHandler[IO](
         urlsConfig.shipments,
         urlsConfig.track,
         urlsConfig.pricing
       )(
+        loadedServiceConfig.timeout.client.seconds
+      )(
         nonBlockingContext
       )
-      _ <- Aggregator[IO](queryTopic)(shipmentTopic, trackTopic, pricingTopic)(
-        clientHandler
-      )(schedulerConfig.maxBufferSize, schedulerConfig.maxTimePeriod)
-      routeHandler <- Stream(
-        RouteHandler[IO](queryTopic)(shipmentTopic, trackTopic, pricingTopic)
-      )
+      aggregator <- Aggregator[IO](clientHandler)(
+        schedulerConfig.maxBufferSize,
+        schedulerConfig.maxTimePeriod
+      )(loadedServiceConfig.timeout.collect.seconds)
+      routeHandler <- Stream.eval(IO(RouteHandler[IO](aggregator)))
       server <-
         BlazeServerBuilder[IO](implicitly[ExecutionContext](nonBlockingContext))
           .bindHttp(

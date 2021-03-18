@@ -19,6 +19,7 @@ import com.aggregate.model.generic.Convert.Convert
 import com.aggregate.service.ServiceConfig.Client.Api.Urls
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.FiniteDuration
 
 trait ClientHandler[F[_]] {
   def getShipments: Pipe[F, Chunk[String], Chunk[Shipment]]
@@ -122,11 +123,15 @@ object ClientHandler {
       trackUrl: String,
       pricingUrl: String
   )(
+      timeout: FiniteDuration
+  )(
       executionContext: ExecutionContext
   ): Stream[F, ClientHandler[F]] =
     for {
       client <- Stream.resource(
-        BlazeClientBuilder[F](executionContext).resource
+        BlazeClientBuilder[F](executionContext)
+          .withRequestTimeout(timeout)
+          .resource
       )
     } yield new ClientHandlerImpl[F](client)(shipmentUrl, trackUrl, pricingUrl)
 

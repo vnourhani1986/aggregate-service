@@ -3,7 +3,7 @@ package com.aggregate.service
 import cats.effect.{Blocker, ContextShift, Sync}
 import com.aggregate.service.ServiceConfig.Client.Api
 import com.aggregate.service.ServiceConfig.Client.Api.Urls
-import com.aggregate.service.ServiceConfig.{Client, Host, Scheduler}
+import com.aggregate.service.ServiceConfig.{Client, Host, Scheduler, Timeout}
 import pureconfig.ConfigSource
 import pureconfig.module.catseffect.syntax._
 import pureconfig.generic.auto._
@@ -11,7 +11,8 @@ import pureconfig.generic.auto._
 case class ServiceConfig(
     host: Host,
     client: Client,
-    scheduler: Scheduler
+    scheduler: Scheduler,
+    timeout: Timeout
 )
 
 object ServiceConfig {
@@ -47,5 +48,10 @@ object ServiceConfig {
   final case class Scheduler(
       maxBufferSize: Int,
       maxTimePeriod: Int
+  )
+
+  final case class Timeout(
+      collect: Int,
+      client: Int
   )
 }
