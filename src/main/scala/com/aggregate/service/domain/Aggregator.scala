@@ -12,7 +12,7 @@ import com.aggregate.service.infrastructure.ClientHandler
 import fs2.concurrent.Topic
 import fs2.{Chunk, Pipe, Stream}
 
-object Dispatcher {
+object Aggregator {
 
   def apply[F[_]: ConcurrentEffect: Timer](
       topic: Topic[F, Query]

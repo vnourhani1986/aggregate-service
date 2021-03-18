@@ -5,9 +5,7 @@ object Dependencies {
   object Versions {
     val circe = "0.12.3"
     val http4s = "0.20.23"
-    val scalatest = "3.0.5"
-    val mokito = "1.16.29"
-    val specs2 = "4.1.0"
+    val `cats-effect-scala-test` = "0.5.2"
     val logback = "1.2.3"
     val fs2 = "2.4.6"
     val pureconfig = "0.14.0"
@@ -36,9 +34,7 @@ object Dependencies {
   ).map(_ % Versions.logback)
 
   val test = Seq(
-    "org.specs2" %% "specs2-core" % Versions.specs2 % "test",
-    "org.scalatest" % "scalatest_2.12" % Versions.scalatest % "test",
-    "org.mockito" %% "mockito-scala" % Versions.mokito % "test"
+    "com.codecommit" %% "cats-effect-testing-scalatest" % Versions.`cats-effect-scala-test` % "test"
   )
 
   val `pure-config` = Seq(

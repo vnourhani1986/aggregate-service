@@ -34,20 +34,25 @@ object Scheduler {
             Some { chunk: Chunk[(Option[A], Long)] =>
               chunk.toList match {
                 case (value, timeTag) :: Nil
-                    if value.isDefined && timeTag - time < timeMaxPeriod =>
+                    if value.isEmpty && timeTag - time < timeMaxPeriod - 1 =>
                   ((n, time), chunk.map(_._1).drop(1))
                 case (value, timeTag) :: Nil
-                    if value.isDefined && timeTag - time >= timeMaxPeriod =>
+                    if value.isEmpty && timeTag - time >= timeMaxPeriod - 1 =>
                   ((0, timeTag), chunk.map(_ => None))
-                case (value, timeTag) :: tail if n < chunkMaxSize =>
+                case (value, timeTag) :: tail if n < chunkMaxSize - 1 =>
                   ((n + 1, timeTag), chunk.map(_._1))
-                case (value, timeTag) :: tail if n >= chunkMaxSize =>
-                  ((0, timeTag), Chunk.seq(None :: chunk.toList.map(_._1)))
+                case (value, timeTag) :: tail if n >= chunkMaxSize - 1 =>
+                  (
+                    (0, timeTag),
+                    Chunk.seq(chunk.toList.map(_._1) ++ List(None))
+                  )
               }
             }
         }
         .split(_.isEmpty)
         .map(_.map(_.get))
+        .map { x => println(x, "end"); x }
+        .filter(_.nonEmpty)
     }
 
 }

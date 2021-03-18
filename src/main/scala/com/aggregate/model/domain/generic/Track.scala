@@ -21,7 +21,12 @@ object Track {
 
     object Statuses extends Enumeration {
       type Status = Value
-      val New, Collecting = Value
+      val New: Status = Value("NEW")
+      val InTransit: Status = Value("IN TRANSIT")
+      val Collecting: Status = Value("COLLECTING")
+      val Collected: Status = Value("COLLECTEd")
+      val Delivering: Status = Value("DELIVERING")
+      val Delivered: Status = Value("DELIVERED")
 
       def find(v: String): Option[Status] =
         values.find(_.toString.toLowerCase() == v)

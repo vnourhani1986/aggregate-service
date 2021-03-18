@@ -5,7 +5,7 @@ import java.util.concurrent.Executors
 import cats.effect.{Blocker, ExitCode, IO, IOApp}
 import com.aggregate.model.domain.core.Query
 import com.aggregate.model.domain.generic.{Pricing, Shipment, Track}
-import com.aggregate.service.domain.Dispatcher
+import com.aggregate.service.domain.Aggregator
 import com.aggregate.service.infrastructure.{ClientHandler, RouteHandler}
 import fs2.Stream
 import fs2.concurrent.Topic
@@ -39,7 +39,7 @@ object AggregateService extends IOApp {
       )(
         nonBlockingContext
       )
-      _ <- Dispatcher[IO](queryTopic)(shipmentTopic, trackTopic, pricingTopic)(
+      _ <- Aggregator[IO](queryTopic)(shipmentTopic, trackTopic, pricingTopic)(
         clientHandler
       )(schedulerConfig.maxBufferSize, schedulerConfig.maxTimePeriod)
       routeHandler <- Stream(
