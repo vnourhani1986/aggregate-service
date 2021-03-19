@@ -4,7 +4,6 @@ project/target
 target
 node_modules
 package-lock.json
-src/main/resources/application.conf
 log/
 *.log
 temp
