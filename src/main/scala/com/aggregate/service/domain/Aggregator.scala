@@ -10,13 +10,13 @@ import com.aggregate.model.domain.generic.{
 }
 import com.aggregate.service.infrastructure.ClientHandler
 import fs2.concurrent.Topic
-import fs2.{Chunk, Pipe, Stream}
+import fs2.Stream
 
 import scala.concurrent.duration.FiniteDuration
 
 trait Aggregator[F[_]] {
-  def publish(query: Query): F[Unit]
-  def collect(query: Query): F[Aggregate]
+  def publish(query: Query): Stream[F, Unit]
+  def collect(query: Query): Stream[F, Aggregate]
 }
 
 class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
@@ -34,10 +34,10 @@ class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
     collectTimeout: FiniteDuration
 ) extends Aggregator[F] {
 
-  override def publish(query: Query): F[Unit] =
-    queryTopic.publish1(query)
+  override def publish(query: Query): Stream[F, Unit] =
+    Stream.eval(queryTopic.publish1(query))
 
-  override def collect(query: Query): F[Aggregate] =
+  override def collect(query: Query): Stream[F, Aggregate] =
     Collector[F](shipmentTopic, trackTopic, pricingTopic)(query)(collectTimeout)
 
   def run: Stream[F, Aggregator[F]] =
@@ -48,7 +48,7 @@ class AggregatorImpl[F[_]: ConcurrentEffect: Timer](
           this.shipmentProcess,
           this.trackProcess,
           this.pricingProcess
-        ).parJoin(3)
+        ).parJoin(4)
       )
 
   private def shipmentProcess: Stream[F, Unit] =

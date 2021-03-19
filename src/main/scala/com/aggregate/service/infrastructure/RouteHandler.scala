@@ -1,25 +1,14 @@
 package com.aggregate.service.infrastructure
 
-import cats.effect.Sync
+import cats.effect.{Concurrent, Sync}
 import com.aggregate.model.domain.core.Query
-import com.aggregate.model.domain.generic.Track
-import fs2.{Chunk, Stream}
-import fs2.concurrent.Topic
-import org.http4s.dsl.impl.QueryParamDecoderMatcher
 import org.http4s.dsl.io.{BadRequest, GET, Ok, Root}
 import org.http4s.{HttpRoutes, Response}
 
 import scala.util.Try
-import cats.implicits._
-import cats.Applicative
 import com.aggregate.model.domain.core
 import com.aggregate.model.domain.core.Aggregate
-import com.aggregate.model.domain.generic.{
-  ISO2CountryCode,
-  Pricing,
-  Shipment,
-  Track
-}
+import com.aggregate.model.domain.generic.ISO2CountryCode
 import com.aggregate.model.generic.Convert
 import com.aggregate.model.generic.Convert.Convert
 import com.aggregate.service.domain.Aggregator
@@ -33,7 +22,7 @@ import org.http4s.circe._
 
 object RouteHandler {
 
-  def apply[F[_]: Sync](
+  def apply[F[_]: Concurrent](
       aggregator: Aggregator[F]
   ): HttpRoutes[F] = {
 
@@ -55,74 +44,77 @@ object RouteHandler {
       jsonEncoderOf[F, AggregateView]
 
     HttpRoutes.of[F] {
-      case GET -> Root / "aggregation" :?
-          ShipmentQueryParamMatcher(shipmentQuery) +&
-          TrackQueryParamMatcher(trackQuery) +&
-          PricingQueryParamMatcher(pricingQuery) =>
-        validateRequest(shipmentQuery, trackQuery, pricingQuery) match {
+      case request @ GET -> Root / "aggregation" =>
+        validateRequest(request) match {
           case Left(error) =>
             Sync[F].delay(Response(status = BadRequest).withEntity(error))
           case Right(query) =>
-            for {
-              _ <- aggregator.publish(query)
-              aggregate <- aggregator.collect(query)
-            } yield Response[F](status = Ok).withEntity(
-              Convert[(Query, Aggregate), AggregateView](
-                (query, aggregate)
-              ).asJson
-            )
+            aggregator
+              .collect(query)
+              .concurrently(aggregator.publish(query))
+              .map(aggregate =>
+                Response[F](status = Ok).withEntity(
+                  Convert[(Query, Aggregate), AggregateView](
+                    (query, aggregate)
+                  ).asJson
+                )
+              )
+              .compile
+              .lastOrError
+
         }
     }
   }
 
-  def validateRequest(
-      shipmentQuery: String,
-      trackQuery: String,
-      pricingQuery: String
+  def validateRequest[F[_]: Sync](
+      request: Request[F]
   ): Either[String, core.Query] = {
 
     import cats.data._
     import cats.data.Validated._
     import cats.implicits._
 
+    val shipmentQuery = request.params
+      .get("shipments")
+      .toSeq
+      .flatMap(_.split(","))
+      .distinct
+      .toArray
+    val trackQuery =
+      request.params.get("track").toSeq.flatMap(_.split(",")).distinct.toArray
+    val pricingQuery =
+      request.params.get("pricing").toSeq.flatMap(_.split(",")).distinct.toArray
+
     val validatedShipment: Validated[String, Array[String]] =
       Either
         .cond(
-          shipmentQuery
-            .split(",")
-            //            .toSet
+          !shipmentQuery
             .map(x => Try(x.toInt).toOption)
             .exists(_.isEmpty),
-          shipmentQuery
-            .split(","),
-          "shipment order ids are not valid"
+          shipmentQuery,
+          "shipment order ids are not valid, "
         )
         .toValidated
 
     val validatedTrack: Validated[String, Array[String]] =
       Either
         .cond(
-          trackQuery
-            .split(",")
-            //            .toSet
+          !trackQuery
             .map(x => Try(x.toInt).toOption)
             .exists(_.isEmpty),
-          shipmentQuery
-            .split(","),
-          "track order ids are not valid"
+          trackQuery,
+          "track order ids are not valid, "
         )
         .toValidated
 
     val validatedPricing: Validated[String, Array[ISO2CountryCode]] =
       Either
         .cond(
-          pricingQuery
-            .split(",")
-            .toSet
+          !pricingQuery
             .map(ISO2CountryCode.fromString)
             .exists(_.isEmpty),
-          pricingQuery.split(",").map(ISO2CountryCode.fromString).map(_.get),
-          "iso2 country codes are not valid"
+          pricingQuery.map(ISO2CountryCode.fromString).map(_.get),
+          "iso2 country codes are not valid, "
         )
         .toValidated
 
@@ -131,13 +123,6 @@ object RouteHandler {
       .toEither
 
   }
-
-  object ShipmentQueryParamMatcher
-      extends QueryParamDecoderMatcher[String]("shipments")
-  object TrackQueryParamMatcher
-      extends QueryParamDecoderMatcher[String]("track")
-  object PricingQueryParamMatcher
-      extends QueryParamDecoderMatcher[String]("pricing")
 
   final case class AggregateView(
       shipments: Map[String, Option[Seq[String]]],
@@ -148,56 +133,46 @@ object RouteHandler {
   implicit
   val aggregateToAggregateView: Convert[(Query, Aggregate), AggregateView] = {
     case (query, aggregate) =>
-      val collectedShipments: Map[String, Option[Seq[String]]] =
-        aggregate.shipments
-          .foldLeft(Map.empty[String, Option[Seq[String]]]) {
-            case (m, shipment) =>
-              m.+(
-                (
-                  shipment.orderId,
-                  Some(shipment.products.map(_.value.toString))
+      val shipments: Map[String, Option[Seq[String]]] =
+        query.shipments.foldLeft(Map.empty[String, Option[Seq[String]]]) {
+          case (table, shipmentQuery) =>
+            aggregate.shipments.find(_.orderId == shipmentQuery) match {
+              case None => table.+(shipmentQuery -> None)
+              case Some(shipment) =>
+                table.+(
+                  shipment.orderId -> Some(
+                    shipment.products.map(_.value.toString)
+                  )
                 )
-              )
-          }
-      val nonCollectedShipments: Map[String, Option[Seq[String]]] =
-        query.shipments
-          .flatMap(shipment =>
-            aggregate.shipments.filter(_.orderId != shipment)
-          )
-          .map(shipment => (shipment.orderId, None))
-          .toMap
-
-      val collectedTracks = aggregate.track
-        .foldLeft(Map.empty[String, Option[String]]) {
-          case (m, track) =>
-            m.+((track.orderId, Some(track.status.value.toString)))
+            }
         }
 
-      val nonCollectedTracks: Map[String, Option[String]] =
-        query.track
-          .flatMap(track => aggregate.track.filter(_.orderId != track))
-          .map(track => (track.orderId, None))
-          .toMap
-
-      val collectedPricing = aggregate.pricing
-        .foldLeft(Map.empty[String, Option[Float]]) {
-          case (m, pricing) =>
-            m.+((pricing.iso2CountryCode.value.value, Some(pricing.price)))
+      val tracks: Map[String, Option[String]] =
+        query.track.foldLeft(Map.empty[String, Option[String]]) {
+          case (table, trackQuery) =>
+            aggregate.track.find(_.orderId == trackQuery) match {
+              case None => table.+(trackQuery -> None)
+              case Some(track) =>
+                table.+(track.orderId -> Some(track.status.value.toString))
+            }
         }
 
-      val nonCollectedPricing: Map[String, Option[Float]] =
-        query.pricing
-          .flatMap(pricing =>
-            aggregate.pricing
-              .filter(_.iso2CountryCode.value.value != pricing.value.value)
-          )
-          .map(pricing => (pricing.iso2CountryCode.value.value, None))
-          .toMap
+      val pricing: Map[String, Option[Float]] =
+        query.pricing.foldLeft(Map.empty[String, Option[Float]]) {
+          case (table, pricingQuery) =>
+            aggregate.pricing.find(
+              _.iso2CountryCode.value == pricingQuery.value
+            ) match {
+              case None => table.+(pricingQuery.value.value -> None)
+              case Some(pricing) =>
+                table.+(pricingQuery.value.value -> Some(pricing.price))
+            }
+        }
 
       AggregateView(
-        shipments = collectedShipments ++ nonCollectedShipments,
-        track = collectedTracks ++ nonCollectedTracks,
-        pricing = collectedPricing ++ nonCollectedPricing
+        shipments = shipments,
+        track = tracks,
+        pricing = pricing
       )
   }
 

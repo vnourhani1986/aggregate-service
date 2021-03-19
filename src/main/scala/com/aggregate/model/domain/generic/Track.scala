@@ -24,7 +24,7 @@ object Track {
       val New: Status = Value("NEW")
       val InTransit: Status = Value("IN TRANSIT")
       val Collecting: Status = Value("COLLECTING")
-      val Collected: Status = Value("COLLECTEd")
+      val Collected: Status = Value("COLLECTED")
       val Delivering: Status = Value("DELIVERING")
       val Delivered: Status = Value("DELIVERED")
 

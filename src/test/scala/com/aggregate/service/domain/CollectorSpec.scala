@@ -23,7 +23,7 @@ class CollectorSpec extends AsyncFreeSpec with AsyncIOSpec with Matchers {
         list <-
           Collector.collector[IO, Int, Int](topic)(Seq(1))((value, list) =>
             list.contains(value)
-          )(5.seconds)
+          )(_ => true)
       } yield list
       result.take(1).compile.toList.asserting(_ shouldBe List(1))
     }
