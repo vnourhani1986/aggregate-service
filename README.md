@@ -8,5 +8,9 @@ to run this project you need a system with jvm and sbt installation. for ruuning
 the project hase an application.conf file that defines all configs about the project. the configs parameters are as follow:
 - host: it defines the server address and port
 - client urls: it includes are clients and api that the service will call them during it's life cycle.
-- scheduler params: the service has a scheduler that buffers requests and send them out with the citerias. it hase two parameters. 1) max-buffer-size that defines maximum buffer chunks that need to send out. 2) max-time-period that defines maximum period that a request can be kept be before sending out from buffer.
-- timeout params: to handle timeout for clients calls and also collect data from clients, there are two parameters. 1) client timout that define timeout for client call. 2) collect timeout that define the time is need to collect data from clients.
+- scheduler params: the service has a scheduler that buffers requests and send them out with the citerias. it hase two parameters. 
+  - max-buffer-size that defines maximum buffer chunks that need to send out. 
+  - max-time-period that defines maximum period that a request can be kept be before sending out from buffer.
+- timeout params: to handle timeout for clients calls and also collect data from clients, there are two parameters. 
+  - client timout that define timeout for client call. 
+  - collect timeout that define the time is need to collect data from clients.
